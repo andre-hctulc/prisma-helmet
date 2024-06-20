@@ -97,4 +97,25 @@ export class WhereBuilder<W> {
         }
         return this;
     }
+
+    equals<F extends WhereField<W>>(field: F, value: BuilderInput<FieldValue<W, F>>) {
+        this.where[field] = value;
+        return this;
+    }
+
+    jsonField<F extends WhereField<W>>(field: F, path: string[], value: BuilderInput<any>) {
+        this.where[field] = { path, equals: value };
+        return this;
+    }
+
+    jsonFields<F extends WhereField<W>>(field: F, obj: BuilderInput<Record<string, any>>) {
+        if (!obj) return this;
+        this.and(...Object.keys(obj).map((key) => ({ [field]: { path: [key], equals: obj[key] } } as W)));
+        return this;
+    }
+
+    jsonIncludes<F extends WhereField<W>>(field: F, path: string[], includes: any) {
+        this.where[field] = { path, includes };
+        return this;
+    }
 }
