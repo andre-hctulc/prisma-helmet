@@ -1,121 +1,122 @@
 import type { Prisma } from "@prisma/client";
-import { Nullable, Optional, OrArrayOf } from "./types_private";
+import type { Nullable, Optional, MaybeArray } from "./types_private";
 
 type BuilderInput<T> = Optional<Nullable<T>>;
-type WhereField<W> = keyof W;
-// TypeScripts Extract uses never instead of undefined, but never extends every type
-type Extr<T, U> = T extends U ? T : null;
-/** Extracts the field value from a where input */
-type FieldValue<W, F extends WhereField<W>> = Extr<W[F], Date> extends Date
-    ? Date
-    : Extr<W[F], Buffer> extends Buffer
-    ? Buffer
-    : Extr<W[F], number> extends number
-    ? number
-    : Extr<W[F], boolean> extends boolean
-    ? boolean
-    : Extr<W[F], string> extends string
+type Field<W> = keyof W;
+type WhereValidator<W> = (where: Partial<W>) => boolean;
+/** Field Type */
+type FT<W, F extends Field<W>> = string extends W[F]
     ? string
+    : boolean extends W[F]
+    ? boolean
+    : number extends W[F]
+    ? number
+    : Date extends W[F]
+    ? Date
     : any;
 
-type WhereValidator<W> = (where: W) => boolean;
-
-type test = Prisma.BucketItemWhereInput;
-
-type F = FieldValue<test, "id">;
-type E = Extract<test["id"], boolean>;
-
 /* 
-Settings a filter (contains, in, ...) shoudl always set the targeted field in the filter itself
+Settings a filter (contains, in, ...) should always set the targeted field in the filter itself
 to ensure consistent behavior. 
 */
 
 export class WhereBuilder<W> {
-    static from = <W>(where: W) => new WhereBuilder(where);
+    static from = <W>(where: Partial<W>) => new WhereBuilder(where);
     static create = <W>() => new WhereBuilder<W>();
 
-    private where: any = {};
-    private validators = new Set<WhereValidator<W>>();
+    private _where: any = {};
+    private _validators = new Set<WhereValidator<W>>();
 
-    constructor(where?: W) {
-        if (where) this.where = where;
+    constructor(base: Partial<W> = {}) {
+        if (base) this._where = base;
     }
 
     build(): W {
-        for (const val of this.validators) {
-            if (!val(this.where)) throw new Error("Validation failed at where clause (WhereBuilder.build)");
+        for (const val of this._validators) {
+            if (!val(this._where)) throw new Error("Validation failed at where clause (WhereBuilder.build)");
         }
-        return this.where;
+        return this._where;
     }
 
     addValidator(validate: WhereValidator<W>) {
-        this.validators.add(validate);
+        this._validators.add(validate);
         return this;
     }
 
     removeValidator(validate: WhereValidator<W>) {
-        this.validators.delete(validate);
+        this._validators.delete(validate);
         return this;
     }
 
-    and<K extends string, V>(...where: W[]) {
-        if (!this.where.AND) this.where.AND = [];
-        this.where.AND.push(...where);
+    and(...where: Partial<W>[]) {
+        if (!this._where.AND) this._where.AND = [];
+        this._where.AND.push(...where);
         return this;
     }
 
-    or<K extends string, V>(...where: W[]) {
-        if (!this.where.OR) this.where.OR = [];
-        this.where.OR.push(...where);
+    or<V>(...where: Partial<W>[]) {
+        if (!this._where.OR) this._where.OR = [];
+        this._where.OR.push(...where);
         return this;
     }
 
-    contribute(where: W) {
+    contribute(where: Partial<W>) {
         for (const key in where) {
-            this.where[key] = where[key];
+            this._where[key] = where[key];
         }
         return this;
     }
 
-    in<F extends WhereField<W>>(field: F, value: BuilderInput<OrArrayOf<FieldValue<W, F>>>) {
+    in<F extends Field<W>>(field: F, value: BuilderInput<MaybeArray<FT<W, F>>>) {
         if (Array.isArray(value)) {
-            this.where[field] = { in: value };
+            this._where[field] = { in: value };
         } else {
-            this.where[field] = value;
+            this._where[field] = value;
         }
         return this;
     }
 
-    contains<F extends WhereField<W>>(field: F, value: BuilderInput<OrArrayOf<FieldValue<W, F>>>) {
+    contains<F extends Field<W>>(field: F, value: BuilderInput<MaybeArray<FT<W, F>>>) {
         if (value == null) {
-            this.where[field] = value;
+            this._where[field] = value;
         } else if (Array.isArray(value)) {
             this.and({ OR: value.map((v) => this.contains(field, v)) } as W);
-            this.where[field] = undefined;
+            this._where[field] = undefined;
         } else {
-            this.where[field] = { contains: value };
+            this._where[field] = { contains: value };
         }
         return this;
     }
 
-    equals<F extends WhereField<W>>(field: F, value: BuilderInput<FieldValue<W, F>>) {
-        this.where[field] = value;
+    equals<F extends Field<W>>(field: F, value: BuilderInput<FT<W, F>>) {
+        this._where[field] = value;
         return this;
     }
 
-    jsonField<F extends WhereField<W>>(field: F, path: string[], value: BuilderInput<any>) {
-        this.where[field] = { path, equals: value };
+    private _jsonPath(path: string[]) {
+        // TODO  postgresql expects an array of strings here
+        return `$.${path.join(".")}`;
+    }
+
+    jsonField<F extends Field<W>>(field: F, path: string[], value: BuilderInput<any>) {
+        const filter: Prisma.JsonFilter = { path: this._jsonPath(path), equals: value };
+        this._where[field] = filter;
         return this;
     }
 
-    jsonFields<F extends WhereField<W>>(field: F, obj: BuilderInput<Record<string, any>>) {
+    jsonFields<F extends Field<W>>(field: F, obj: BuilderInput<Record<string, any>>) {
         if (!obj) return this;
-        this.and(...Object.keys(obj).map((key) => ({ [field]: { path: [key], equals: obj[key] } } as W)));
+        this.and(
+            ...Object.keys(obj).map(
+                (key) => ({ [field]: { path: this._jsonPath([key]), equals: obj[key] } } as W)
+            )
+        );
         return this;
     }
 
-    jsonIncludes<F extends WhereField<W>>(field: F, path: string[], includes: any) {
-        this.where[field] = { path, includes };
+    jsonArrayContains<F extends Field<W>>(field: F, path: string[], includes: any) {
+        const filter: Prisma.JsonFilter = { path: this._jsonPath(path), array_contains: includes };
+        this._where[field] = filter;
         return this;
     }
 }
